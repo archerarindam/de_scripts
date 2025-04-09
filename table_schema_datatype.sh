@@ -1,115 +1,120 @@
 #!/bin/bash
 
 # --- Configuration ---
+# This is a Bash comment. The shell ignores this line.
 # Specify the Hive database name
-DB_NAME="your_database_name"
+DB_NAME="your_database_name" # This is also a Bash comment, after the command.
 
 # Specify the table names in the desired order
 # Use spaces to separate table names within the parentheses
+# These lines starting with # are Bash comments.
 TABLE_NAMES=(
   "table1"
   "table2"
   "another_table"
 )
-# --- End Configuration ---
+# --- End Configuration --- # Bash comment
 
-# --- Script Logic ---
+# --- Script Logic --- # Bash comment
 
-# Check if hive command exists
+# Check if hive command exists (Bash comment)
 if ! command -v hive &> /dev/null; then
     echo "Error: 'hive' command not found. Please ensure Hive client is installed and in your PATH."
     exit 1
 fi
 
-# Check if DB_NAME is set
+# Check if DB_NAME is set (Bash comment)
 if [[ -z "$DB_NAME" ]]; then
   echo "Error: DB_NAME is not set in the script. Please edit the script and provide a database name."
   exit 1
 fi
 
-# Check if TABLE_NAMES array is empty
+# Check if TABLE_NAMES array is empty (Bash comment)
 if [[ ${#TABLE_NAMES[@]} -eq 0 ]]; then
   echo "Warning: TABLE_NAMES array is empty in the script. No tables to process."
   exit 0
 fi
 
-# Loop through each table name specified in the array
+# Loop through each table name specified in the array (Bash comment)
 for table in "${TABLE_NAMES[@]}"; do
   echo "${DB_NAME}.${table}:"
 
-  # Execute hive command to get detailed table description
-  # Use awk to parse the output
+  # Execute hive command to get detailed table description (Bash comment)
+  # Use awk to parse the output (Bash comment)
   hive -e "DESCRIBE FORMATTED ${DB_NAME}.${table};" 2>/dev/null | \
   awk '
+    # Lines starting with # INSIDE the awk '\''...'\'' block are AWK comments,
+    # NOT Bash comments. They explain the awk script logic.
     BEGIN {
-      in_cols = 0      # Flag: are we inside the regular columns section?
-      in_parts = 0     # Flag: are we inside the partition columns section?
+      in_cols = 0      # awk comment: Flag for regular columns section
+      in_parts = 0     # awk comment: Flag for partition columns section
     }
 
-    # Identify the start of the column definitions (usually after # col_name ...)
+    # awk comment: Identify the start of the column definitions
+    # The pattern /^\# col_name.../ looks for lines *literally starting* with "# col_name".
+    # The \# inside the pattern means a literal #, not a comment marker *for the pattern*.
     /^\# col_name\s+data_type\s+comment/ {
       in_cols = 1
-      next # Skip this header line
+      next # awk command: Skip this header line
     }
 
-    # Identify the start of the partition column definitions
-    /^\# Partition Columns/ {
-      in_cols = 0   # We are definitely out of regular columns now
-      in_parts = 1
-      next # Skip this header line
+    # awk comment: Identify the start of the partition column definitions
+    # The pattern /^\# Partition Columns/ looks for lines *literally starting* with "# Partition Columns"
+    /^\# Partition Columns/ { # This # is part of the pattern text being searched for
+      in_cols = 0   # awk command
+      in_parts = 1  # awk command
+      next # awk command: Skip this header line
     }
 
-    # Identify the end of sections (e.g., start of detailed info or properties)
+    # awk comment: Identify the end of sections
+    # The patterns match lines starting with "# Detailed Table Information", etc.
     /^\# Detailed Table Information/ || /^\# Storage Information/ || /^\# Table Parameters/ {
       in_cols = 0
       in_parts = 0
-      next # Skip these sections entirely if needed, or just stop processing cols/partitions
+      next # awk command: Skip these sections
     }
 
-    # If we are inside the regular columns section...
+    # awk comment: If we are inside the regular columns section...
     in_cols == 1 {
-      # Skip empty lines and lines starting with # (comments/separators)
+      # awk comment: Skip empty lines and lines starting with # (comments/separators in Hive output)
+      # The pattern $0 ~ /^#/ checks if the *input line* from Hive starts with #
       if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^#/) {
-        next
+        next # awk command
       }
-      # Print the first two fields (column name and data type)
-      # Handle potential empty lines between column definition blocks
+      # awk command: Print the first two fields (column name and data type)
       if (NF >= 2) {
-        # Clean up potential leading/trailing whitespace just in case
-        gsub(/^[ \t]+|[ \t]+$/, "", $1);
-        gsub(/^[ \t]+|[ \t]+$/, "", $2);
+        gsub(/^[ \t]+|[ \t]+$/, "", $1); # awk command
+        gsub(/^[ \t]+|[ \t]+$/, "", $2); # awk command
         if ($1 != "") {
-             print $1, $2
+             print $1, $2 # awk command
         }
       } else {
-         # If a line doesn't have enough fields, might signal end of block
-         in_cols = 0
+         in_cols = 0 # awk command
       }
     }
 
-    # If we are inside the partition columns section...
+    # awk comment: If we are inside the partition columns section...
     in_parts == 1 {
-      # Skip empty lines and lines starting with #
+      # awk comment: Skip empty lines and lines starting with # in Hive output
       if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^#/) {
-        next
+        next # awk command
       }
-      # Print the first two fields (partition column name and data type)
+      # awk command: Print the first two fields (partition column name and data type)
        if (NF >= 2) {
-        gsub(/^[ \t]+|[ \t]+$/, "", $1);
-        gsub(/^[ \t]+|[ \t]+$/, "", $2);
+        gsub(/^[ \t]+|[ \t]+$/, "", $1); # awk command
+        gsub(/^[ \t]+|[ \t]+$/, "", $2); # awk command
         if ($1 != "") {
-            print $1, $2
+            print $1, $2 # awk command
         }
       } else {
-         # If a line doesnt have enough fields, might signal end of block
-         in_parts = 0
+         in_parts = 0 # awk command
       }
     }
-  '
+  ' # <-- This single quote ENDS the awk script for Bash.
 
-  # Add a blank line between table outputs for better readability
-  echo ""
+  # Add a blank line between table outputs for better readability (Bash comment)
+  echo "" # This is a Bash command
 
-done
+done # This ends the Bash 'for' loop
 
-echo "Script finished."
+echo "Script finished." # This is a Bash command
