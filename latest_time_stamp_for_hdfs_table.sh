@@ -36,3 +36,5 @@ done
 
 echo "=================================================="
 echo "Script finished."
+
+hdfs_path=$(hive -e "DESCRIBE FORMATTED ${full_table_name};" 2>/dev/null | grep 'Location:' | cut -d '|' -f 3 | sed 's/^[[:space:]]*//')
