@@ -1,123 +1,83 @@
 #!/bin/bash
+# Script: describe_tables.sh
+# Purpose: For a given Hive database and a list of tables, output only the column names
+#          and data types, and separately list the partition columns (if any).
+#
+# Usage: ./describe_tables.sh <database> <table1> [table2 ... tableN]
 
-# --- Configuration ---
-DB_NAME="your_database_name"
-TABLE_NAMES=(
-  "table1"
-  "table2"
-  "another_table"
-)
-# --- End Configuration ---
+# Check that at least two arguments are provided (one database and one table)
+if [ "$#" -lt 2 ]; then
+    echo "Usage: $0 <database> <table1> [table2 ... tableN]"
+    exit 1
+fi
 
-# --- Script Logic ---
+# The first argument is the database name; the rest are table names.
+DATABASE="$1"
+shift
 
-# Basic checks
-if ! command -v hive &> /dev/null; then echo "Error: hive not found"; exit 1; fi
-if [[ -z "$DB_NAME" ]]; then echo "Error: DB_NAME not set"; exit 1; fi
-if [[ <span class="math-inline">\{\#TABLE\_NAMES\[@\]\} \-eq 0 \]\]; then echo "Warning\: TABLE\_NAMES empty"; exit 0; fi
-\# Loop through tables
-for table in "</span>{TABLE_NAMES[@]}"; do
-  echo "<span class="math-inline">\{DB\_NAME\}\.</span>{table}:"
+# Process each provided table
+for TABLE in "$@"
+do
+    echo "---------------------------------------------"
+    echo "Processing table: ${TABLE}"
+    echo "---------------------------------------------"
 
-  # Execute SHOW CREATE TABLE and pipe to awk
-  hive -e "SHOW CREATE TABLE <span class="math-inline">\{DB\_NAME\}\.</span>{table};" 2>/dev/null | \
-  awk '
-    # BEGIN: Initial state flags
-    BEGIN {
-        in_cols = 0      # Flag: processing regular columns
-        in_parts = 0     # Flag: processing partition columns
-    }
+    # Run Hive to describe the table in formatted mode.
+    # It outputs a lot of details, including columns and extra metadata.
+    DESC_OUTPUT=$(hive -e "USE ${DATABASE}; DESCRIBE FORMATTED ${TABLE};")
+    
+    # Check if the hive command was successful.
+    if [ $? -ne 0 ]; then
+        echo "Error: Could not retrieve metadata for table ${TABLE}"
+        continue
+    fi
 
-    # Detect start of column definitions - line AFTER the opening parenthesis of CREATE TABLE
-    # Assumes CREATE TABLE tbl_name (...) format is reasonably consistent.
-    /CREATE TABLE.*\(/ {
-        # Determine if columns might start on this line itself or definitely the next
-        match(<span class="math-inline">0, /CREATE TABLE\.\*\\\( \*\(\.\*\)/, cap\); \# Capture everything after the first \(
-line\_after\_paren \= cap\[1\];
-gsub\(/^\[ \\t\]\+\|\[ \\t\]\+</span>/, "", line_after_paren); # Trim captured part
-
-        # If the captured part (after ( ) looks like a column def, start processing here.
-        # Otherwise, assume columns start on the *next* line.
-        if (line_after_paren != "" && line_after_paren !~ /^--/ && line_after_paren !~ /^\s*\)/ ) {
-             in_cols = 1 # Start processing from this line (will be handled by the main block below)
-        } else {
-             in_cols = 1; next # Assume start on next line, skip this CREATE TABLE ( line.
+    echo "Columns and Data Types:"
+    # Process the output to get only table columns.
+    # We assume the output has a header line that begins with "col_name   data_type"
+    # After that, valid column rows follow until a line that begins with "#" is encountered.
+    echo "$DESC_OUTPUT" | awk '
+      BEGIN { header_found = 0 }
+      {
+        # Look for the header line (typically "col_name   data_type")
+        if ($1=="col_name" && $2=="data_type") {
+          header_found = 1;
+          next;
         }
-    }
-
-    # Detect start of partition definitions
-    /PARTITIONED BY\s*\(/ {
-        in_cols = 0  # Stop column processing definitively
-        in_parts = 1 # Start partition processing
-        # Determine if partitions might start on this line or next
-        match(<span class="math-inline">0, /PARTITIONED BY\\s\*\\\(\\s\*\(\.\*\)/, cap\); \# Capture after PARTITIONED BY \(
-line\_after\_paren \= cap\[1\];
-gsub\(/^\[ \\t\]\+\|\[ \\t\]\+</span>/, "", line_after_paren); # Trim
-
-        # If captured part looks like a partition def, process this line below.
-        # Otherwise, assume start on next line.
-        if (line_after_paren != "" && line_after_paren !~ /^--/ && line_after_paren !~ /^\s*\)/ ) {
-            # Start processing from this line (handled by main block below)
-        } else {
-            next # Assume start on next line, skip this PARTITIONED BY ( line.
+        # Once the header is found, stop processing if a line starts with "#"
+        if (header_found && $1 ~ /^#/) {
+          exit;
         }
-    }
-
-    # Detect end of definitions / start of other clauses (heuristic approach)
-    # Lines starting with only ), or specific keywords signal the end of cols/partitions.
-    # NOTE: This relies on these keywords appearing *after* column/partition lists.
-    /^\s*\)\s*$/ || /^ROW FORMAT/ || /^STORED AS/ || /^LOCATION/ || /^TBLPROPERTIES/ {
-        # If we were in cols or parts, we are now finished with that section.
-        if (in_cols || in_parts) {
-            in_cols = 0
-            in_parts = 0
+        # If we are in the column section and the line has at least two fields, print them.
+        if (header_found && NF >= 2) {
+          print $1 " -> " $2
         }
-        # Skip processing these lines as if they were columns/partitions.
-        next
-    }
+      }
+    '
 
-    # Main processing block: Handle lines if inside column or partition sections
-    (in_cols == 1 || in_parts == 1) {
-        current_line = <span class="math-inline">0;
-\# 1\. Trim whitespace
-gsub\(/^\[ \\t\]\+\|\[ \\t\]\+</span>/, "", current_line);
-        # 2. Skip empty lines or SQL comments
-        if (current_line == "" || current_line ~ /^--/) {
-             next
-        }
+    echo ""
+    echo "Partition Columns:"
+    # Process the output to extract partition columns.
+    # Look for the section that begins with "# Partition Information"
+    PARTITION_COLUMNS=$(echo "$DESC_OUTPUT" | awk '
+      BEGIN { partition_found = 0 }
+      /^# Partition Information/ { partition_found = 1; next }
+      # When in the partition section, print lines until an empty line or metadata is encountered.
+      partition_found && NF > 0 {
+         if ($1 ~ /^#/ || $1 == "") { exit }
+         if (NF >= 2) {
+           print $1 " -> " $2
+         }
+      }
+    ')
+    
+    if [ -z "$PARTITION_COLUMNS" ]; then
+        echo "None found (this table is not partitioned)"
+    else
+        echo "$PARTITION_COLUMNS"
+    fi
 
-        # 3. Clean up: Remove backticks around names, remove trailing comma
-        gsub(/^`|`<span class="math-inline">/, "", current\_line\); \# Removes backticks from start/end
-sub\(/,\\s\*</span>/, "", current_line); # Removes trailing comma and any trailing space before it
-        # 4. Re-trim after cleanup
-        gsub(/^[ \t]+|[ \t]+<span class="math-inline">/, "", current\_line\);
-\# 5\. Extract name and type\: Match first word \(name\) and the rest \(type\)
-\#    Uses a robust regex matching\: start, non\-space chars \(name\), space\(s\), any chars \(type\), end\.
-match\(current\_line, /^\(\[^ \]\+\)\[ \]\+\(\.\*\)</span>/, arr)
-
-        # 6. Print if match found and does not look like a misplaced keyword
-        if (arr[1] != "" && arr[2] != "") {
-             # Sanity check against keywords that might appear if parsing slips
-             kw_check = tolower(arr[1]);
-             if (kw_check != "row" && kw_check != "stored" && kw_check != "location" && kw_check != "tblproperties") {
-                # Output: column_name datatype
-                print arr[1], arr[2]
-             } else {
-                 # Hit a keyword unexpectedly, assume end of section
-                 in_cols=0; in_parts=0;
-             }
-        } else {
-             # Line did not match "name<space>type" format. Could be a multi-line type definition,
-             # a comment, or something else. We will ignore it for this script purpose.
-             # Advanced parsing would be needed for multi-line complex types.
-        }
-        next # Explicitly move to the next line after processing
-    }
-  ' # <-- This is the single quote ending the awk script block for Bash
-
-  # Add a blank line between table outputs
-  echo ""
-
+    echo ""
 done
 
-echo "Script finished."
+echo "Metadata extraction complete."
