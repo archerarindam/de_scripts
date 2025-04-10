@@ -11,19 +11,18 @@ TABLE_NAMES=(
 
 # --- Script Logic ---
 
-# Basic checks (omitted for brevity, assume they are okay from previous versions)
+# Basic checks
 if ! command -v hive &> /dev/null; then echo "Error: hive not found"; exit 1; fi
 if [[ -z "$DB_NAME" ]]; then echo "Error: DB_NAME not set"; exit 1; fi
-if [[ ${#TABLE_NAMES[@]} -eq 0 ]]; then echo "Warning: TABLE_NAMES empty"; exit 0; fi
-
-# Loop through tables
-for table in "${TABLE_NAMES[@]}"; do
-  echo "${DB_NAME}.${table}:"
+if [[ <span class="math-inline">\{\#TABLE\_NAMES\[@\]\} \-eq 0 \]\]; then echo "Warning\: TABLE\_NAMES empty"; exit 0; fi
+\# Loop through tables
+for table in "</span>{TABLE_NAMES[@]}"; do
+  echo "<span class="math-inline">\{DB\_NAME\}\.</span>{table}:"
 
   # Execute SHOW CREATE TABLE and pipe to awk
-  hive -e "SHOW CREATE TABLE ${DB_NAME}.${table};" 2>/dev/null | \
+  hive -e "SHOW CREATE TABLE <span class="math-inline">\{DB\_NAME\}\.</span>{table};" 2>/dev/null | \
   awk '
-    # '\''BEGIN'\'': Initial state flags
+    # BEGIN: Initial state flags
     BEGIN {
         in_cols = 0      # Flag: processing regular columns
         in_parts = 0     # Flag: processing partition columns
@@ -33,16 +32,16 @@ for table in "${TABLE_NAMES[@]}"; do
     # Assumes CREATE TABLE tbl_name (...) format is reasonably consistent.
     /CREATE TABLE.*\(/ {
         # Determine if columns might start on this line itself or definitely the next
-        match($0, /CREATE TABLE.*\( *(.*)/, cap); # Capture everything after the first '('
-        line_after_paren = cap[1];
-        gsub(/^[ \t]+|[ \t]+$/, "", line_after_paren); # Trim captured part
+        match(<span class="math-inline">0, /CREATE TABLE\.\*\\\( \*\(\.\*\)/, cap\); \# Capture everything after the first \(
+line\_after\_paren \= cap\[1\];
+gsub\(/^\[ \\t\]\+\|\[ \\t\]\+</span>/, "", line_after_paren); # Trim captured part
 
-        # If the captured part (after '(') looks like a column def, start processing here.
+        # If the captured part (after ( ) looks like a column def, start processing here.
         # Otherwise, assume columns start on the *next* line.
         if (line_after_paren != "" && line_after_paren !~ /^--/ && line_after_paren !~ /^\s*\)/ ) {
              in_cols = 1 # Start processing from this line (will be handled by the main block below)
         } else {
-             in_cols = 1; next # Assume start on next line, skip this 'CREATE TABLE (' line.
+             in_cols = 1; next # Assume start on next line, skip this CREATE TABLE ( line.
         }
     }
 
@@ -51,16 +50,16 @@ for table in "${TABLE_NAMES[@]}"; do
         in_cols = 0  # Stop column processing definitively
         in_parts = 1 # Start partition processing
         # Determine if partitions might start on this line or next
-        match($0, /PARTITIONED BY\s*\(\s*(.*)/, cap); # Capture after PARTITIONED BY (
-        line_after_paren = cap[1];
-        gsub(/^[ \t]+|[ \t]+$/, "", line_after_paren); # Trim
+        match(<span class="math-inline">0, /PARTITIONED BY\\s\*\\\(\\s\*\(\.\*\)/, cap\); \# Capture after PARTITIONED BY \(
+line\_after\_paren \= cap\[1\];
+gsub\(/^\[ \\t\]\+\|\[ \\t\]\+</span>/, "", line_after_paren); # Trim
 
         # If captured part looks like a partition def, process this line below.
         # Otherwise, assume start on next line.
         if (line_after_paren != "" && line_after_paren !~ /^--/ && line_after_paren !~ /^\s*\)/ ) {
             # Start processing from this line (handled by main block below)
         } else {
-            next # Assume start on next line, skip this 'PARTITIONED BY (' line.
+            next # Assume start on next line, skip this PARTITIONED BY ( line.
         }
     }
 
@@ -79,25 +78,24 @@ for table in "${TABLE_NAMES[@]}"; do
 
     # Main processing block: Handle lines if inside column or partition sections
     (in_cols == 1 || in_parts == 1) {
-        current_line = $0;
-        # 1. Trim whitespace
-        gsub(/^[ \t]+|[ \t]+$/, "", current_line);
+        current_line = <span class="math-inline">0;
+\# 1\. Trim whitespace
+gsub\(/^\[ \\t\]\+\|\[ \\t\]\+</span>/, "", current_line);
         # 2. Skip empty lines or SQL comments
         if (current_line == "" || current_line ~ /^--/) {
              next
         }
 
         # 3. Clean up: Remove backticks around names, remove trailing comma
-        gsub(/^`|`$/, "", current_line); # Removes backticks from start/end
-        sub(/,\s*$/, "", current_line); # Removes trailing comma and any trailing space before it
+        gsub(/^`|`<span class="math-inline">/, "", current\_line\); \# Removes backticks from start/end
+sub\(/,\\s\*</span>/, "", current_line); # Removes trailing comma and any trailing space before it
         # 4. Re-trim after cleanup
-        gsub(/^[ \t]+|[ \t]+$/, "", current_line);
+        gsub(/^[ \t]+|[ \t]+<span class="math-inline">/, "", current\_line\);
+\# 5\. Extract name and type\: Match first word \(name\) and the rest \(type\)
+\#    Uses a robust regex matching\: start, non\-space chars \(name\), space\(s\), any chars \(type\), end\.
+match\(current\_line, /^\(\[^ \]\+\)\[ \]\+\(\.\*\)</span>/, arr)
 
-        # 5. Extract name and type: Match first word (name) and the rest (type)
-        #    Uses a robust regex matching: start, non-space chars (name), space(s), any chars (type), end.
-        match(current_line, /^([^ ]+)[ ]+(.*)$/, arr)
-
-        # 6. Print if match found and doesn'\''t look like a misplaced keyword
+        # 6. Print if match found and does not look like a misplaced keyword
         if (arr[1] != "" && arr[2] != "") {
              # Sanity check against keywords that might appear if parsing slips
              kw_check = tolower(arr[1]);
@@ -109,8 +107,8 @@ for table in "${TABLE_NAMES[@]}"; do
                  in_cols=0; in_parts=0;
              }
         } else {
-             # Line didn'\''t match "name<space>type" format. Could be a multi-line type definition,
-             # a comment, or something else. We will ignore it for this scripts purpose.
+             # Line did not match "name<space>type" format. Could be a multi-line type definition,
+             # a comment, or something else. We will ignore it for this script purpose.
              # Advanced parsing would be needed for multi-line complex types.
         }
         next # Explicitly move to the next line after processing
