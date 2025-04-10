@@ -1,0 +1,125 @@
+#!/bin/bash
+
+# --- Configuration ---
+DB_NAME="your_database_name"
+TABLE_NAMES=(
+  "table1"
+  "table2"
+  "another_table"
+)
+# --- End Configuration ---
+
+# --- Script Logic ---
+
+# Basic checks (omitted for brevity, assume they are okay from previous versions)
+if ! command -v hive &> /dev/null; then echo "Error: hive not found"; exit 1; fi
+if [[ -z "$DB_NAME" ]]; then echo "Error: DB_NAME not set"; exit 1; fi
+if [[ ${#TABLE_NAMES[@]} -eq 0 ]]; then echo "Warning: TABLE_NAMES empty"; exit 0; fi
+
+# Loop through tables
+for table in "${TABLE_NAMES[@]}"; do
+  echo "${DB_NAME}.${table}:"
+
+  # Execute SHOW CREATE TABLE and pipe to awk
+  hive -e "SHOW CREATE TABLE ${DB_NAME}.${table};" 2>/dev/null | \
+  awk '
+    # '\''BEGIN'\'': Initial state flags
+    BEGIN {
+        in_cols = 0      # Flag: processing regular columns
+        in_parts = 0     # Flag: processing partition columns
+    }
+
+    # Detect start of column definitions - line AFTER the opening parenthesis of CREATE TABLE
+    # Assumes CREATE TABLE tbl_name (...) format is reasonably consistent.
+    /CREATE TABLE.*\(/ {
+        # Determine if columns might start on this line itself or definitely the next
+        match($0, /CREATE TABLE.*\( *(.*)/, cap); # Capture everything after the first '('
+        line_after_paren = cap[1];
+        gsub(/^[ \t]+|[ \t]+$/, "", line_after_paren); # Trim captured part
+
+        # If the captured part (after '(') looks like a column def, start processing here.
+        # Otherwise, assume columns start on the *next* line.
+        if (line_after_paren != "" && line_after_paren !~ /^--/ && line_after_paren !~ /^\s*\)/ ) {
+             in_cols = 1 # Start processing from this line (will be handled by the main block below)
+        } else {
+             in_cols = 1; next # Assume start on next line, skip this 'CREATE TABLE (' line.
+        }
+    }
+
+    # Detect start of partition definitions
+    /PARTITIONED BY\s*\(/ {
+        in_cols = 0  # Stop column processing definitively
+        in_parts = 1 # Start partition processing
+        # Determine if partitions might start on this line or next
+        match($0, /PARTITIONED BY\s*\(\s*(.*)/, cap); # Capture after PARTITIONED BY (
+        line_after_paren = cap[1];
+        gsub(/^[ \t]+|[ \t]+$/, "", line_after_paren); # Trim
+
+        # If captured part looks like a partition def, process this line below.
+        # Otherwise, assume start on next line.
+        if (line_after_paren != "" && line_after_paren !~ /^--/ && line_after_paren !~ /^\s*\)/ ) {
+            # Start processing from this line (handled by main block below)
+        } else {
+            next # Assume start on next line, skip this 'PARTITIONED BY (' line.
+        }
+    }
+
+    # Detect end of definitions / start of other clauses (heuristic approach)
+    # Lines starting with only ), or specific keywords signal the end of cols/partitions.
+    # NOTE: This relies on these keywords appearing *after* column/partition lists.
+    /^\s*\)\s*$/ || /^ROW FORMAT/ || /^STORED AS/ || /^LOCATION/ || /^TBLPROPERTIES/ {
+        # If we were in cols or parts, we are now finished with that section.
+        if (in_cols || in_parts) {
+            in_cols = 0
+            in_parts = 0
+        }
+        # Skip processing these lines as if they were columns/partitions.
+        next
+    }
+
+    # Main processing block: Handle lines if inside column or partition sections
+    (in_cols == 1 || in_parts == 1) {
+        current_line = $0;
+        # 1. Trim whitespace
+        gsub(/^[ \t]+|[ \t]+$/, "", current_line);
+        # 2. Skip empty lines or SQL comments
+        if (current_line == "" || current_line ~ /^--/) {
+             next
+        }
+
+        # 3. Clean up: Remove backticks around names, remove trailing comma
+        gsub(/^`|`$/, "", current_line); # Removes backticks from start/end
+        sub(/,\s*$/, "", current_line); # Removes trailing comma and any trailing space before it
+        # 4. Re-trim after cleanup
+        gsub(/^[ \t]+|[ \t]+$/, "", current_line);
+
+        # 5. Extract name and type: Match first word (name) and the rest (type)
+        #    Uses a robust regex matching: start, non-space chars (name), space(s), any chars (type), end.
+        match(current_line, /^([^ ]+)[ ]+(.*)$/, arr)
+
+        # 6. Print if match found and doesn'\''t look like a misplaced keyword
+        if (arr[1] != "" && arr[2] != "") {
+             # Sanity check against keywords that might appear if parsing slips
+             kw_check = tolower(arr[1]);
+             if (kw_check != "row" && kw_check != "stored" && kw_check != "location" && kw_check != "tblproperties") {
+                # Output: column_name datatype
+                print arr[1], arr[2]
+             } else {
+                 # Hit a keyword unexpectedly, assume end of section
+                 in_cols=0; in_parts=0;
+             }
+        } else {
+             # Line didn'\''t match "name<space>type" format. Could be a multi-line type definition,
+             # a comment, or something else. We will ignore it for this scripts purpose.
+             # Advanced parsing would be needed for multi-line complex types.
+        }
+        next # Explicitly move to the next line after processing
+    }
+  ' # <-- This is the single quote ending the awk script block for Bash
+
+  # Add a blank line between table outputs
+  echo ""
+
+done
+
+echo "Script finished."
